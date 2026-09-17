@@ -17,7 +17,7 @@ export interface UsePaymentRequestResult {
 
 /**
  * Real-time Payment Request subscription hook
- * Listens to live Firestore updates or memory state
+ * Listens to live Firestore updates or local/server shared dev state across tabs
  */
 export function usePaymentRequest(
   paymentId?: string,
@@ -36,7 +36,11 @@ export function usePaymentRequest(
         req = await PaymentRequestRepository.updateStatus(paymentId, "PENDING");
       }
       setPaymentRequest(req);
-      if (!req) setError(`Invoice "${paymentId}" not found.`);
+      if (!req) {
+        setError(`Invoice "${paymentId}" not found.`);
+      } else {
+        setError(null);
+      }
     } catch (err: unknown) {
       const msg =
         err instanceof Error ? err.message : "Failed to load payment request";
@@ -76,8 +80,9 @@ export function usePaymentRequest(
             } else {
               setPaymentRequest(data);
             }
+            setError(null);
           } else {
-            // Document does not exist in Firestore; try memory fallback
+            // Document does not exist in Firestore; try fallback
             fetchManual();
           }
           setIsLoading(false);
@@ -90,10 +95,35 @@ export function usePaymentRequest(
 
       return () => unsubscribe();
     } else {
-      // Local fallback: fetch initial and poll every 2.5s for state changes
+      // Local fallback: fetch initial, poll every 2s, and listen to cross-tab storage events
       fetchManual();
-      const interval = setInterval(fetchManual, 2500);
-      return () => clearInterval(interval);
+
+      const handleCustomUpdate = (e: Event) => {
+        const detail = (e as CustomEvent<PaymentRequest>).detail;
+        if (detail && detail.id === paymentId) {
+          setPaymentRequest(detail);
+          setError(null);
+          setIsLoading(false);
+        } else {
+          fetchManual();
+        }
+      };
+
+      const handleStorageUpdate = (e: StorageEvent) => {
+        if (e.key === "dineback_dev_invoices" || !e.key) {
+          fetchManual();
+        }
+      };
+
+      window.addEventListener("dineback_invoice_update", handleCustomUpdate);
+      window.addEventListener("storage", handleStorageUpdate);
+      const interval = setInterval(fetchManual, 2000);
+
+      return () => {
+        window.removeEventListener("dineback_invoice_update", handleCustomUpdate);
+        window.removeEventListener("storage", handleStorageUpdate);
+        clearInterval(interval);
+      };
     }
   }, [paymentId, autoSetPending, fetchManual]);
 

@@ -20,20 +20,64 @@ import {
 } from "@/lib/validation/paymentRequest";
 import { RestaurantRepository } from "./restaurants";
 import { CampaignRepository } from "./campaigns";
-import {
-  validateTransition,
-  canTransition,
-} from "@/lib/payments/statusLifecycle";
+import { validateTransition } from "@/lib/payments/statusLifecycle";
 import { ARC_USDC_ADDRESS } from "@/lib/arc/chain";
 
 const COLLECTION_NAME = "paymentRequests";
 const APP_BASE_URL =
   process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-const memoryStore = new Map<string, PaymentRequest>();
+// Global fallback store across server & memory
+declare global {
+  // eslint-disable-next-line no-var
+  var __DINEBACK_DEV_INVOICES__: Map<string, PaymentRequest> | undefined;
+}
+
+const memoryStore =
+  globalThis.__DINEBACK_DEV_INVOICES__ ||
+  (globalThis.__DINEBACK_DEV_INVOICES__ = new Map<string, PaymentRequest>());
+
+const LOCAL_STORAGE_KEY = "dineback_dev_invoices";
+
+function getLocalStorageInvoices(): Map<string, PaymentRequest> {
+  if (typeof window === "undefined") return new Map();
+  try {
+    const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw);
+    const map = new Map<string, PaymentRequest>();
+    for (const item of parsed) {
+      if (item && item.id) map.set(item.id, item);
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+function saveLocalStorageInvoice(invoice: PaymentRequest) {
+  if (typeof window === "undefined") return;
+  try {
+    const map = getLocalStorageInvoices();
+    map.set(invoice.id, invoice);
+    const arr = Array.from(map.values());
+    window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(arr));
+    window.dispatchEvent(new CustomEvent("dineback_invoice_update", { detail: invoice }));
+  } catch {
+    // Ignore localStorage errors
+  }
+}
 
 export class PaymentRequestRepository {
   static generateId(): string {
+    if (typeof window !== "undefined" && window.crypto && window.crypto.getRandomValues) {
+      const bytes = new Uint8Array(6);
+      window.crypto.getRandomValues(bytes);
+      const hex = Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      return `db_${hex}`;
+    }
     const randomHex = crypto.randomBytes(6).toString("hex");
     return `db_${randomHex}`;
   }
@@ -130,7 +174,18 @@ export class PaymentRequestRepository {
         // Fallback
       }
     }
+
     memoryStore.set(id, newRequest);
+    saveLocalStorageInvoice(newRequest);
+
+    // Sync to internal dev server API in background
+    if (typeof window !== "undefined") {
+      fetch("/api/invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newRequest),
+      }).catch(() => {});
+    }
 
     return newRequest;
   }
@@ -152,6 +207,31 @@ export class PaymentRequestRepository {
 
     if (!request) {
       request = memoryStore.get(id) || null;
+    }
+
+    if (!request && typeof window !== "undefined") {
+      const localMap = getLocalStorageInvoices();
+      request = localMap.get(id) || null;
+      if (request) {
+        memoryStore.set(id, request);
+      }
+    }
+
+    // Try fetching from server dev endpoint if still not found in browser
+    if (!request && typeof window !== "undefined") {
+      try {
+        const res = await fetch(`/api/invoices/${id}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.invoice) {
+            request = data.invoice as PaymentRequest;
+            memoryStore.set(id, request);
+            saveLocalStorageInvoice(request);
+          }
+        }
+      } catch {
+        // Fallback
+      }
     }
 
     if (!request) return null;
@@ -198,7 +278,18 @@ export class PaymentRequestRepository {
         // Keep memory in sync
       }
     }
+
     memoryStore.set(id, updated);
+    saveLocalStorageInvoice(updated);
+
+    if (typeof window !== "undefined") {
+      fetch(`/api/invoices/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated),
+      }).catch(() => {});
+    }
+
     return updated;
   }
 
@@ -225,6 +316,11 @@ export class PaymentRequestRepository {
       } catch {
         // Fallback
       }
+    }
+
+    const localMap = getLocalStorageInvoices();
+    for (const [k, v] of localMap.entries()) {
+      memoryStore.set(k, v);
     }
 
     return Array.from(memoryStore.values())
