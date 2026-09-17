@@ -1,0 +1,225 @@
+"use client";
+
+import * as React from "react";
+import { useRouter } from "next/navigation";
+import {
+  useAccount,
+  useReadContract,
+  useWriteContract,
+  useChainId,
+} from "wagmi";
+import { waitForTransactionReceipt } from "@wagmi/core";
+import { wagmiConfig } from "@/lib/arc/wagmi";
+import { ARC_USDC_ADDRESS, ARC_TESTNET_CHAIN_ID } from "@/lib/arc/chain";
+import { DINEBACK_PAYMENT_ADDRESS, dineBackPaymentAbi } from "@/lib/arc/contracts";
+import { erc20Abi } from "@/lib/arc/abi/erc20";
+import { idToBytes32, parseUSDC } from "@/lib/arc/utils";
+import { PaymentRequest } from "@/types/payment";
+
+export type PaymentExecutionStep =
+  | "IDLE"
+  | "CHECKING_ALLOWANCE"
+  | "NEEDS_APPROVAL"
+  | "APPROVING"
+  | "APPROVAL_CONFIRMING"
+  | "APPROVED"
+  | "PAYING"
+  | "PAYMENT_CONFIRMING"
+  | "VERIFYING_SERVER"
+  | "SUCCESS"
+  | "ERROR";
+
+export interface UseDineBackPaymentResult {
+  step: PaymentExecutionStep;
+  needsApproval: boolean;
+  allowance: bigint;
+  requiredAmount: bigint;
+  isApproving: boolean;
+  isPaying: boolean;
+  txHash: `0x${string}` | null;
+  approvalTxHash: `0x${string}` | null;
+  error: string | null;
+  approveUSDC: () => Promise<void>;
+  payBill: () => Promise<void>;
+  resetError: () => void;
+}
+
+export function useDineBackPayment(
+  paymentRequest: PaymentRequest | null
+): UseDineBackPaymentResult {
+  const router = useRouter();
+  const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  const isCorrectNetwork = chainId === ARC_TESTNET_CHAIN_ID;
+
+  const [step, setStep] = React.useState<PaymentExecutionStep>("IDLE");
+  const [error, setError] = React.useState<string | null>(null);
+  const [txHash, setTxHash] = React.useState<`0x${string}` | null>(null);
+  const [approvalTxHash, setApprovalTxHash] = React.useState<`0x${string}` | null>(null);
+
+  const { writeContractAsync } = useWriteContract();
+
+  const requiredAmount = React.useMemo(() => {
+    if (!paymentRequest) return BigInt(0);
+    return parseUSDC(paymentRequest.billAmount);
+  }, [paymentRequest]);
+
+  // Query active allowance for DineBackPayment contract
+  const {
+    data: allowanceData,
+    refetch: refetchAllowance,
+  } = useReadContract({
+    address: ARC_USDC_ADDRESS,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: address && DINEBACK_PAYMENT_ADDRESS ? [address, DINEBACK_PAYMENT_ADDRESS] : undefined,
+    chainId: ARC_TESTNET_CHAIN_ID,
+    query: {
+      enabled: Boolean(address && isConnected && isCorrectNetwork),
+    },
+  });
+
+  const allowance = typeof allowanceData === "bigint" ? allowanceData : BigInt(0);
+  const needsApproval = allowance < requiredAmount;
+
+  // Step 1: Approve USDC Allowance
+  const approveUSDC = async () => {
+    if (!address || !isConnected || !isCorrectNetwork || !paymentRequest) {
+      setError("Please connect your wallet on Arc Testnet first.");
+      return;
+    }
+
+    try {
+      setError(null);
+      setStep("APPROVING");
+
+      const hash = await writeContractAsync({
+        address: ARC_USDC_ADDRESS,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [DINEBACK_PAYMENT_ADDRESS, requiredAmount],
+        chainId: ARC_TESTNET_CHAIN_ID,
+      });
+
+      setApprovalTxHash(hash);
+      setStep("APPROVAL_CONFIRMING");
+
+      const receipt = await waitForTransactionReceipt(wagmiConfig, {
+        hash,
+        chainId: ARC_TESTNET_CHAIN_ID,
+      });
+
+      if (receipt.status !== "success") {
+        throw new Error("USDC approval transaction reverted on Arc Testnet.");
+      }
+
+      await refetchAllowance();
+      setStep("APPROVED");
+    } catch (err: unknown) {
+      console.error("USDC approval failed:", err);
+      const msg =
+        err instanceof Error ? err.message : "USDC approval failed or was rejected.";
+      setError(msg.includes("User rejected") ? "Approval was cancelled in your wallet." : msg);
+      setStep("NEEDS_APPROVAL");
+    }
+  };
+
+  // Step 2: Execute DineBack Payment
+  const payBill = async () => {
+    if (!address || !isConnected || !isCorrectNetwork || !paymentRequest) {
+      setError("Please connect your wallet on Arc Testnet first.");
+      return;
+    }
+
+    if (needsApproval) {
+      setError("Please approve USDC spending before executing payment.");
+      setStep("NEEDS_APPROVAL");
+      return;
+    }
+
+    try {
+      setError(null);
+      setStep("PAYING");
+
+      const paymentIdBytes = idToBytes32(paymentRequest.id);
+      const campaignIdBytes = idToBytes32(paymentRequest.campaignId);
+      const deadlineSec = BigInt(Math.floor(paymentRequest.expiresAt / 1000));
+
+      const hash = await writeContractAsync({
+        address: DINEBACK_PAYMENT_ADDRESS,
+        abi: dineBackPaymentAbi,
+        functionName: "payBill",
+        args: [
+          paymentIdBytes,
+          paymentRequest.restaurantWallet,
+          requiredAmount,
+          campaignIdBytes,
+          deadlineSec,
+        ],
+        chainId: ARC_TESTNET_CHAIN_ID,
+      });
+
+      setTxHash(hash);
+      setStep("PAYMENT_CONFIRMING");
+
+      // Wait for on-chain receipt
+      const receipt = await waitForTransactionReceipt(wagmiConfig, {
+        hash,
+        chainId: ARC_TESTNET_CHAIN_ID,
+      });
+
+      if (receipt.status !== "success") {
+        throw new Error("Payment transaction reverted on Arc Testnet.");
+      }
+
+      // Step 3: Trigger authoritative server verification
+      setStep("VERIFYING_SERVER");
+      const res = await fetch("/api/payments/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          paymentId: paymentRequest.id,
+          txHash: hash,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Server payment verification failed.");
+      }
+
+      setStep("SUCCESS");
+      // Navigate to success receipt screen
+      router.push(`/success/${paymentRequest.id}?tx=${hash}`);
+    } catch (err: unknown) {
+      console.error("Payment execution failed:", err);
+      const msg =
+        err instanceof Error ? err.message : "Payment execution failed or was rejected.";
+      setError(
+        msg.includes("User rejected")
+          ? "Transaction was cancelled in your wallet."
+          : msg.includes("PaymentAlreadyPaid")
+          ? "This invoice has already been settled on-chain."
+          : msg.includes("PaymentExpired")
+          ? "This invoice has expired on-chain."
+          : msg
+      );
+      setStep("ERROR");
+    }
+  };
+
+  return {
+    step,
+    needsApproval,
+    allowance,
+    requiredAmount,
+    isApproving: step === "APPROVING" || step === "APPROVAL_CONFIRMING",
+    isPaying: step === "PAYING" || step === "PAYMENT_CONFIRMING" || step === "VERIFYING_SERVER",
+    txHash,
+    approvalTxHash,
+    error,
+    approveUSDC,
+    payBill,
+    resetError: () => setError(null),
+  };
+}
