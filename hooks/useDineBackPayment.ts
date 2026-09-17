@@ -6,7 +6,7 @@ import {
   useAccount,
   useReadContract,
   useWriteContract,
-  useChainId,
+  useSwitchChain,
 } from "wagmi";
 import { waitForTransactionReceipt } from "@wagmi/core";
 import { wagmiConfig } from "@/lib/arc/wagmi";
@@ -18,6 +18,7 @@ import { PaymentRequest } from "@/types/payment";
 
 export type PaymentExecutionStep =
   | "IDLE"
+  | "SWITCHING_NETWORK"
   | "CHECKING_ALLOWANCE"
   | "NEEDS_APPROVAL"
   | "APPROVING"
@@ -36,9 +37,11 @@ export interface UseDineBackPaymentResult {
   requiredAmount: bigint;
   isApproving: boolean;
   isPaying: boolean;
+  isCorrectNetwork: boolean;
   txHash: `0x${string}` | null;
   approvalTxHash: `0x${string}` | null;
   error: string | null;
+  ensureArcNetwork: () => Promise<boolean>;
   approveUSDC: () => Promise<void>;
   payBill: () => Promise<void>;
   resetError: () => void;
@@ -48,9 +51,11 @@ export function useDineBackPayment(
   paymentRequest: PaymentRequest | null
 ): UseDineBackPaymentResult {
   const router = useRouter();
-  const { address, isConnected } = useAccount();
-  const chainId = useChainId();
-  const isCorrectNetwork = chainId === ARC_TESTNET_CHAIN_ID;
+  const { address, isConnected, chainId: walletChainId, chain } = useAccount();
+  const { switchChainAsync } = useSwitchChain();
+
+  const activeChainId = walletChainId ?? chain?.id;
+  const isCorrectNetwork = activeChainId === ARC_TESTNET_CHAIN_ID;
 
   const [step, setStep] = React.useState<PaymentExecutionStep>("IDLE");
   const [error, setError] = React.useState<string | null>(null);
@@ -64,7 +69,7 @@ export function useDineBackPayment(
     return parseUSDC(paymentRequest.billAmount);
   }, [paymentRequest]);
 
-  // Query active allowance for DineBackPayment contract
+  // Query active allowance for DineBackPayment contract on Arc Testnet
   const {
     data: allowanceData,
     refetch: refetchAllowance,
@@ -82,12 +87,38 @@ export function useDineBackPayment(
   const allowance = typeof allowanceData === "bigint" ? allowanceData : BigInt(0);
   const needsApproval = allowance < requiredAmount;
 
+  // Helper to ensure wallet is on Arc Testnet before submitting any transaction
+  const ensureArcNetwork = async (): Promise<boolean> => {
+    if (activeChainId === ARC_TESTNET_CHAIN_ID) {
+      return true;
+    }
+    try {
+      setStep("SWITCHING_NETWORK");
+      setError(null);
+      await switchChainAsync({ chainId: ARC_TESTNET_CHAIN_ID });
+      return true;
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Please switch to Arc Testnet in your wallet.";
+      setError(
+        msg.includes("User rejected")
+          ? "Network switch request was rejected in your wallet."
+          : "Please switch to Arc Testnet (Chain ID 5042002) in your wallet to proceed."
+      );
+      setStep("ERROR");
+      return false;
+    }
+  };
+
   // Step 1: Approve USDC Allowance
   const approveUSDC = async () => {
-    if (!address || !isConnected || !isCorrectNetwork || !paymentRequest) {
-      setError("Please connect your wallet on Arc Testnet first.");
+    if (!address || !isConnected || !paymentRequest) {
+      setError("Please connect your wallet first.");
       return;
     }
+
+    const networkOk = await ensureArcNetwork();
+    if (!networkOk) return;
 
     try {
       setError(null);
@@ -119,17 +150,26 @@ export function useDineBackPayment(
       console.error("USDC approval failed:", err);
       const msg =
         err instanceof Error ? err.message : "USDC approval failed or was rejected.";
-      setError(msg.includes("User rejected") ? "Approval was cancelled in your wallet." : msg);
+      if (msg.includes("User rejected")) {
+        setError("Approval was cancelled in your wallet.");
+      } else if (msg.includes("does not match the target chain")) {
+        setError("Please switch your wallet to Arc Testnet (Chain ID 5042002) and try again.");
+      } else {
+        setError(msg);
+      }
       setStep("NEEDS_APPROVAL");
     }
   };
 
   // Step 2: Execute DineBack Payment
   const payBill = async () => {
-    if (!address || !isConnected || !isCorrectNetwork || !paymentRequest) {
-      setError("Please connect your wallet on Arc Testnet first.");
+    if (!address || !isConnected || !paymentRequest) {
+      setError("Please connect your wallet first.");
       return;
     }
+
+    const networkOk = await ensureArcNetwork();
+    if (!networkOk) return;
 
     if (needsApproval) {
       setError("Please approve USDC spending before executing payment.");
@@ -162,7 +202,7 @@ export function useDineBackPayment(
       setTxHash(hash);
       setStep("PAYMENT_CONFIRMING");
 
-      // Wait for on-chain receipt
+      // Wait for on-chain receipt on Arc Testnet
       const receipt = await waitForTransactionReceipt(wagmiConfig, {
         hash,
         chainId: ARC_TESTNET_CHAIN_ID,
@@ -195,15 +235,17 @@ export function useDineBackPayment(
       console.error("Payment execution failed:", err);
       const msg =
         err instanceof Error ? err.message : "Payment execution failed or was rejected.";
-      setError(
-        msg.includes("User rejected")
-          ? "Transaction was cancelled in your wallet."
-          : msg.includes("PaymentAlreadyPaid")
-          ? "This invoice has already been settled on-chain."
-          : msg.includes("PaymentExpired")
-          ? "This invoice has expired on-chain."
-          : msg
-      );
+      if (msg.includes("User rejected")) {
+        setError("Transaction was cancelled in your wallet.");
+      } else if (msg.includes("does not match the target chain")) {
+        setError("Please switch your wallet to Arc Testnet (Chain ID 5042002) and try again.");
+      } else if (msg.includes("PaymentAlreadyPaid")) {
+        setError("This invoice has already been settled on-chain.");
+      } else if (msg.includes("PaymentExpired")) {
+        setError("This invoice has expired on-chain.");
+      } else {
+        setError(msg);
+      }
       setStep("ERROR");
     }
   };
@@ -215,9 +257,11 @@ export function useDineBackPayment(
     requiredAmount,
     isApproving: step === "APPROVING" || step === "APPROVAL_CONFIRMING",
     isPaying: step === "PAYING" || step === "PAYMENT_CONFIRMING" || step === "VERIFYING_SERVER",
+    isCorrectNetwork,
     txHash,
     approvalTxHash,
     error,
+    ensureArcNetwork,
     approveUSDC,
     payBill,
     resetError: () => setError(null),

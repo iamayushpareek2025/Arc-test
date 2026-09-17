@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useParams } from "next/navigation";
-import { useAccount, useChainId, useSwitchChain } from "wagmi";
+import { useAccount, useSwitchChain } from "wagmi";
 import { useUSDCBalance } from "@/hooks/useUSDCBalance";
 import { usePaymentRequest } from "@/hooks/usePaymentRequest";
 import { useDineBackPayment } from "@/hooks/useDineBackPayment";
@@ -49,10 +49,10 @@ export default function CustomerPaymentPage() {
   const [timeLeft, setTimeLeft] = React.useState<string>("");
 
   // Wallet & Blockchain Hooks
-  const { isConnected, address } = useAccount();
-  const chainId = useChainId();
+  const { address, isConnected, chainId: walletChainId, chain } = useAccount();
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
-  const isArcNetwork = chainId === ARC_TESTNET_CHAIN_ID;
+  const activeChainId = walletChainId ?? chain?.id;
+  const isArcNetwork = isConnected && activeChainId === ARC_TESTNET_CHAIN_ID;
   const { formatted: usdcBalance, displayNumber: usdcNumber, isLoading: isLoadingBalance } = useUSDCBalance();
 
   // Real DineBack Payment Execution Hook
@@ -64,6 +64,7 @@ export default function CustomerPaymentPage() {
     txHash,
     approvalTxHash,
     error: paymentError,
+    ensureArcNetwork,
     approveUSDC,
     payBill,
     resetError,
@@ -172,7 +173,7 @@ export default function CustomerPaymentPage() {
               </Badge>
             ) : (
               <Badge variant="outline" className="text-[10px] py-0.5 px-2 text-slate-400 border-slate-700">
-                Dev Fallback Mode
+                Dev Sync Mode
               </Badge>
             )}
           </div>
@@ -294,7 +295,7 @@ export default function CustomerPaymentPage() {
                     <div>
                       <p className="font-bold text-amber-300">Wrong Network Connected</p>
                       <p className="text-[11px] text-amber-200/80 mt-0.5">
-                        Please switch to Arc Testnet (Chain ID 5042002) to proceed with payment.
+                        Your wallet is not connected to Arc Testnet (Chain ID 5042002).
                       </p>
                     </div>
                   </div>
@@ -352,7 +353,7 @@ export default function CustomerPaymentPage() {
               <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3.5 flex items-start gap-2.5 text-xs text-red-300">
                 <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
                 <div className="flex-1">
-                  <p className="font-semibold">Transaction Error</p>
+                  <p className="font-semibold">Transaction Notice</p>
                   <p className="text-red-200/80 text-[11px] mt-0.5">{paymentError}</p>
                 </div>
                 <button
@@ -365,11 +366,12 @@ export default function CustomerPaymentPage() {
             )}
 
             {/* Live Blockchain Processing Indicator */}
-            {(isApproving || isPaying) && (
+            {(isApproving || isPaying || step === "SWITCHING_NETWORK") && (
               <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs space-y-2 text-emerald-300">
                 <div className="flex items-center gap-2 font-bold">
                   <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
                   <span>
+                    {step === "SWITCHING_NETWORK" && "Requesting network switch to Arc Testnet in wallet..."}
                     {step === "APPROVING" && "Confirming approval in wallet..."}
                     {step === "APPROVAL_CONFIRMING" && "Waiting for Arc Testnet approval block..."}
                     {step === "PAYING" && "Confirming payment in wallet..."}
@@ -437,8 +439,25 @@ export default function CustomerPaymentPage() {
               </div>
             ) : (
               <div className="w-full space-y-2">
-                {/* 2-Step Payment Action */}
-                {isConnected && isArcNetwork && hasSufficientBalance && needsApproval ? (
+                {/* Check Network First */}
+                {!isConnected ? (
+                  <div className="space-y-2">
+                    <p className="text-center text-[11px] text-slate-500 mb-2">
+                      Connect your wallet above to settle this bill on Arc
+                    </p>
+                  </div>
+                ) : !isArcNetwork ? (
+                  <Button
+                    size="lg"
+                    onClick={() => switchChain?.({ chainId: ARC_TESTNET_CHAIN_ID })}
+                    disabled={isSwitchingChain}
+                    className="w-full font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 gap-2 py-3.5 text-sm"
+                  >
+                    <Network className="w-4 h-4" />
+                    {isSwitchingChain ? "Switching Network..." : "Switch to Arc Testnet"}
+                  </Button>
+                ) : needsApproval ? (
+                  /* 2-Step Payment Action: Step 1 Approve */
                   <div className="space-y-2">
                     <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400">
                       <span className="font-semibold text-slate-300 block mb-0.5">
@@ -449,7 +468,7 @@ export default function CustomerPaymentPage() {
                     </div>
                     <Button
                       size="lg"
-                      disabled={isApproving}
+                      disabled={isApproving || !hasSufficientBalance}
                       onClick={approveUSDC}
                       className="w-full font-bold shadow-lg shadow-emerald-500/20 gap-2 py-3.5 text-sm"
                     >
@@ -467,11 +486,10 @@ export default function CustomerPaymentPage() {
                     </Button>
                   </div>
                 ) : (
+                  /* Step 2: Pay */
                   <Button
                     size="lg"
                     disabled={
-                      !isConnected ||
-                      !isArcNetwork ||
                       !hasSufficientBalance ||
                       isPaying ||
                       isApproving
@@ -493,19 +511,16 @@ export default function CustomerPaymentPage() {
                   </Button>
                 )}
 
-                {!isConnected ? (
-                  <p className="text-center text-[11px] text-slate-500">
-                    Connect wallet above to proceed with payment
-                  </p>
-                ) : !isArcNetwork ? (
+                {isConnected && !isArcNetwork && (
                   <p className="text-center text-[11px] text-amber-400">
-                    Switch network to Arc Testnet to enable payment
+                    Switch network to Arc Testnet (Chain ID 5042002) to proceed
                   </p>
-                ) : !hasSufficientBalance ? (
+                )}
+                {isConnected && isArcNetwork && !hasSufficientBalance && (
                   <p className="text-center text-[11px] text-red-400">
                     Insufficient USDC balance to complete this transaction
                   </p>
-                ) : null}
+                )}
               </div>
             )}
           </CardFooter>
