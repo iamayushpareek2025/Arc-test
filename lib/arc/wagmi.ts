@@ -1,5 +1,4 @@
-import { http, createConfig, createStorage } from "wagmi";
-import { injected } from "wagmi/connectors";
+import { http, createConfig, createStorage, injected } from "wagmi";
 import { arcTestnet } from "./chain";
 
 export const wagmiConfig = createConfig({
