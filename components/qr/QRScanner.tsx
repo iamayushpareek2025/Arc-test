@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Html5Qrcode } from "html5-qrcode";
 import { parseAndValidatePaymentInput } from "@/lib/validation/qr";
+import { decodeQRFromFile } from "@/lib/qr/decoder";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -16,12 +17,13 @@ import {
   Image as ImageIcon,
   Upload,
   ShieldAlert,
+  Sparkles,
 } from "lucide-react";
 
 export function QRScanner() {
   const router = useRouter();
 
-  const [mode, setMode] = React.useState<"camera" | "photo" | "manual">("camera");
+  const [mode, setMode] = React.useState<"camera" | "photo" | "manual">("photo");
   const [manualCode, setManualCode] = React.useState<string>("");
   const [cameraError, setCameraError] = React.useState<string | null>(null);
   const [validationError, setValidationError] = React.useState<string | null>(null);
@@ -29,7 +31,8 @@ export function QRScanner() {
   const [isProcessingFile, setIsProcessingFile] = React.useState<boolean>(false);
 
   const scannerRef = React.useRef<Html5Qrcode | null>(null);
-  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = React.useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = React.useRef<HTMLInputElement | null>(null);
   const elementId = "dineback-qr-reader";
 
   const handleScanSuccess = React.useCallback(
@@ -48,13 +51,13 @@ export function QRScanner() {
         }
         router.push(`/pay/${result.paymentId}`);
       } else {
-        setValidationError(result.error || "Scanned QR code is not a valid DineBack invoice.");
+        setValidationError(result.error || "Scanned QR code is not a valid DineBack invoice link.");
       }
     },
     [router]
   );
 
-  // Initialize Live Camera Scanner
+  // Initialize Live Camera Scanner (Works on localhost or HTTPS)
   React.useEffect(() => {
     let isMounted = true;
 
@@ -62,7 +65,6 @@ export function QRScanner() {
       setCameraError(null);
       setValidationError(null);
 
-      // Check if secure context
       const isSecure =
         typeof window !== "undefined" &&
         (window.isSecureContext ||
@@ -71,7 +73,7 @@ export function QRScanner() {
 
       if (!isSecure) {
         setCameraError(
-          "Live camera stream requires HTTPS when accessing over mobile WiFi. Please use 'Snap / Upload Photo' or 'Enter Code' below."
+          "Mobile browsers block live video streams over non-HTTPS local IP. Use 'Snap / Photo' below to scan with your phone camera instantly."
         );
         setMode("photo");
         return;
@@ -86,7 +88,6 @@ export function QRScanner() {
         aspectRatio: 1.0,
       };
 
-      // Try environment facing camera first
       html5QrCode
         .start(
           { facingMode: "environment" },
@@ -97,7 +98,6 @@ export function QRScanner() {
           () => {}
         )
         .catch(() => {
-          // Fallback to any available camera ID
           Html5Qrcode.getCameras()
             .then((cameras) => {
               if (cameras && cameras.length > 0 && isMounted) {
@@ -119,7 +119,7 @@ export function QRScanner() {
               console.warn("Camera init failed:", err);
               if (isMounted) {
                 setCameraError(
-                  "Camera access was denied or is unavailable. Use 'Snap / Upload Photo' or 'Enter Code' below."
+                  "Camera access was denied or is unavailable. Please use 'Snap / Photo' or 'Enter Code' below."
                 );
                 setMode("photo");
               }
@@ -141,7 +141,7 @@ export function QRScanner() {
     }
   }, [mode, isNavigating, handleScanSuccess]);
 
-  // Handle Photo / File Scan
+  // Robust Photo / File Scan using multi-scale jsQR & canvas
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -150,16 +150,33 @@ export function QRScanner() {
     setIsProcessingFile(true);
 
     try {
-      const html5QrCode = new Html5Qrcode("dineback-qr-file-helper");
-      const decodedText = await html5QrCode.scanFile(file, true);
+      // 1. Try pure multi-scale canvas decode
+      const decodedText = await decodeQRFromFile(file);
+      if (decodedText) {
+        handleScanSuccess(decodedText);
+        return;
+      }
+
+      // 2. Fallback to html5-qrcode file scan
+      const html5QrCode = new Html5Qrcode("dineback-qr-fallback-box");
+      const fallbackText = await html5QrCode.scanFile(file, false);
       html5QrCode.clear();
-      handleScanSuccess(decodedText);
+
+      if (fallbackText) {
+        handleScanSuccess(fallbackText);
+        return;
+      }
+
+      throw new Error("QR code not detected in image.");
     } catch (err) {
       console.warn("QR file scan error:", err);
-      setValidationError("Could not detect a valid DineBack QR in this image. Please try another photo or enter code.");
+      setValidationError(
+        "Could not detect a valid QR code in this image. Please ensure the QR is well-lit and in focus, or enter the invoice code directly."
+      );
     } finally {
       setIsProcessingFile(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (cameraInputRef.current) cameraInputRef.current.value = "";
+      if (galleryInputRef.current) galleryInputRef.current.value = "";
     }
   };
 
@@ -180,23 +197,11 @@ export function QRScanner() {
 
   return (
     <div className="w-full max-w-md mx-auto space-y-4">
-      {/* Hidden helper for file scanning */}
-      <div id="dineback-qr-file-helper" className="hidden" />
+      {/* Hidden container for fallback scanner */}
+      <div id="dineback-qr-fallback-box" style={{ width: 1, height: 1, overflow: "hidden", opacity: 0 }} />
 
       {/* Mode Selector Tabs */}
       <div className="flex rounded-xl bg-slate-900/90 p-1 border border-slate-800">
-        <button
-          type="button"
-          onClick={() => setMode("camera")}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-lg transition-all ${
-            mode === "camera"
-              ? "bg-emerald-500 text-slate-950 shadow-md font-bold"
-              : "text-slate-400 hover:text-white"
-          }`}
-        >
-          <Camera className="w-3.5 h-3.5" />
-          Live Camera
-        </button>
         <button
           type="button"
           onClick={() => setMode("photo")}
@@ -206,8 +211,20 @@ export function QRScanner() {
               : "text-slate-400 hover:text-white"
           }`}
         >
-          <ImageIcon className="w-3.5 h-3.5" />
+          <Camera className="w-3.5 h-3.5" />
           Snap / Photo
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("camera")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-lg transition-all ${
+            mode === "camera"
+              ? "bg-emerald-500 text-slate-950 shadow-md font-bold"
+              : "text-slate-400 hover:text-white"
+          }`}
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Live Camera
         </button>
         <button
           type="button"
@@ -226,17 +243,23 @@ export function QRScanner() {
       {validationError && (
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3.5 flex items-start gap-2.5 text-xs text-red-300 animate-in fade-in">
           <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-          <div>
-            <p className="font-semibold">Scan Error</p>
-            <p className="text-red-200/80">{validationError}</p>
+          <div className="flex-1">
+            <p className="font-semibold">Scan Notice</p>
+            <p className="text-red-200/80 text-[11px] mt-0.5">{validationError}</p>
           </div>
+          <button
+            onClick={() => setValidationError(null)}
+            className="text-red-400 hover:text-red-200 text-xs underline font-semibold"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
       {cameraError && mode !== "camera" && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200 flex items-start gap-2">
           <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <p>{cameraError}</p>
+          <p className="text-[11px] leading-relaxed">{cameraError}</p>
         </div>
       )}
 
@@ -247,16 +270,85 @@ export function QRScanner() {
         </div>
       )}
 
+      {/* Snap / Photo Upload Mode */}
+      {mode === "photo" && !isNavigating && (
+        <Card className="border-slate-800 bg-slate-900/90 shadow-2xl rounded-3xl">
+          <CardContent className="p-6 text-center space-y-5">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto shadow-inner">
+              <QrCode className="w-8 h-8" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-white">
+                Scan Restaurant QR Code
+              </h3>
+              <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
+                Take a quick photo of the bill QR code or pick a screenshot from your gallery.
+              </p>
+            </div>
+
+            {/* Hidden Inputs */}
+            <input
+              type="file"
+              ref={cameraInputRef}
+              accept="image/*"
+              capture="environment"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <input
+              type="file"
+              ref={galleryInputRef}
+              accept="image/*"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+
+            <div className="space-y-2.5 pt-2">
+              <Button
+                type="button"
+                disabled={isProcessingFile}
+                onClick={() => cameraInputRef.current?.click()}
+                className="w-full py-4 font-bold gap-2 text-sm shadow-lg shadow-emerald-500/20"
+              >
+                {isProcessingFile ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Decoding QR Code...
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-4 h-4" />
+                    Take Photo of QR Code
+                  </>
+                )}
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isProcessingFile}
+                onClick={() => galleryInputRef.current?.click()}
+                className="w-full py-3.5 text-xs font-semibold gap-2 border-slate-700 hover:bg-slate-800"
+              >
+                <ImageIcon className="w-3.5 h-3.5 text-slate-400" />
+                Upload Photo from Gallery
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Live Camera Mode */}
       {mode === "camera" && !isNavigating && (
         <Card className="border-slate-800 bg-slate-900/90 shadow-2xl overflow-hidden rounded-3xl">
           <div className="p-4 text-center border-b border-slate-800/80">
             <h3 className="text-sm font-bold text-white flex items-center justify-center gap-1.5">
               <QrCode className="w-4 h-4 text-emerald-400" />
-              Scan Restaurant Bill QR
+              Live Camera Stream
             </h3>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              Point your camera at the cashier screen or bill receipt
+              Point your camera directly at the QR code
             </p>
           </div>
 
@@ -267,54 +359,6 @@ export function QRScanner() {
           <div className="p-3 bg-slate-950/80 text-center text-[11px] text-slate-500 border-t border-slate-800/60">
             Powered by Arc Testnet • USDC Cashback Enabled
           </div>
-        </Card>
-      )}
-
-      {/* Snap / Photo Upload Mode */}
-      {mode === "photo" && !isNavigating && (
-        <Card className="border-slate-800 bg-slate-900/90 shadow-2xl rounded-3xl">
-          <CardContent className="p-6 text-center space-y-4">
-            <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto">
-              <Upload className="w-7 h-7" />
-            </div>
-
-            <div>
-              <h3 className="text-base font-bold text-white">
-                Snap or Upload QR Photo
-              </h3>
-              <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed">
-                Take a quick photo of the QR code or pick a screenshot from your phone gallery.
-              </p>
-            </div>
-
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept="image/*"
-              capture="environment"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-
-            <Button
-              type="button"
-              disabled={isProcessingFile}
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full py-3.5 font-bold gap-2 text-sm shadow-lg shadow-emerald-500/20"
-            >
-              {isProcessingFile ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Analyzing Photo...
-                </>
-              ) : (
-                <>
-                  <Camera className="w-4 h-4" />
-                  Take Photo / Pick Image
-                </>
-              )}
-            </Button>
-          </CardContent>
         </Card>
       )}
 
