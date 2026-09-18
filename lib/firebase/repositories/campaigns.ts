@@ -123,6 +123,18 @@ export class CampaignRepository {
     );
   }
 
+  static async listAllActive(): Promise<CashbackCampaign[]> {
+    const all = Array.from(memoryStore.values());
+    const now = Date.now();
+    return all.filter(
+      (c) =>
+        c.status === "ACTIVE" &&
+        now >= c.validFrom &&
+        now <= c.validTo &&
+        c.remainingBudget > 0
+    );
+  }
+
   static async upsert(data: CashbackCampaign): Promise<CashbackCampaign> {
     const validated = campaignSchema.parse(data);
     const docData: CashbackCampaign = {
