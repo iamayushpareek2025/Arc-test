@@ -22,14 +22,14 @@ export default function RootLayout({
           <div className="flex min-h-screen flex-col">
             <header className="sticky top-0 z-50 w-full border-b border-slate-800/80 bg-[#090b0e]/80 backdrop-blur-md">
               <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-                <Link href="/" className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 font-black text-slate-950 shadow-md shadow-emerald-500/20">
+                <Link href="/" className="flex items-center gap-2.5 sm:gap-3">
+                  <div className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 font-black text-slate-950 shadow-md shadow-emerald-500/20 shrink-0 text-sm sm:text-base">
                     D
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-lg font-bold tracking-tight text-white flex items-center gap-1.5">
+                    <span className="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-1.5">
                       DineBack
-                      <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/20">
+                      <span className="hidden min-[360px]:inline-block rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[9px] sm:text-[10px] font-semibold text-emerald-400 border border-emerald-500/20">
                         ARC TESTNET
                       </span>
                     </span>
