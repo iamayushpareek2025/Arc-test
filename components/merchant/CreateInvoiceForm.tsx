@@ -199,7 +199,7 @@ export function CreateInvoiceForm({ onCreated }: CreateInvoiceFormProps) {
             <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
               Bill Amount (USDC)
             </label>
-            <div className="relative">
+            <div className="relative flex items-center">
               <input
                 type="number"
                 step="0.01"
@@ -208,10 +208,11 @@ export function CreateInvoiceForm({ onCreated }: CreateInvoiceFormProps) {
                 onChange={(e) => setBillAmount(e.target.value)}
                 placeholder="0.00"
                 required
-                className="w-full rounded-xl border border-slate-800 bg-slate-950 pl-4 pr-16 py-3 text-lg font-bold text-white focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                className="w-full rounded-2xl border border-slate-800 bg-slate-950 pl-4 pr-28 py-3 text-lg font-bold text-white focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
-              <div className="absolute inset-y-0 right-0 flex items-center pr-3.5 pointer-events-none text-xs font-bold text-emerald-400">
-                USDC (Arc)
+              <div className="absolute right-3 flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs font-bold text-emerald-400 pointer-events-none">
+                <span>USDC</span>
+                <span className="text-[10px] text-emerald-500 font-semibold">(Arc)</span>
               </div>
             </div>
           </div>
