@@ -6,30 +6,30 @@ import { Html5Qrcode } from "html5-qrcode";
 import { parseAndValidatePaymentInput } from "@/lib/validation/qr";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import {
   Camera,
   Keyboard,
   AlertCircle,
-  CheckCircle2,
-  Sparkles,
   ArrowRight,
-  ShieldCheck,
   RefreshCw,
   QrCode,
+  Image as ImageIcon,
+  Upload,
+  ShieldAlert,
 } from "lucide-react";
 
 export function QRScanner() {
   const router = useRouter();
 
-  const [mode, setMode] = React.useState<"camera" | "manual">("camera");
+  const [mode, setMode] = React.useState<"camera" | "photo" | "manual">("camera");
   const [manualCode, setManualCode] = React.useState<string>("");
-  const [isScanning, setIsScanning] = React.useState<boolean>(false);
   const [cameraError, setCameraError] = React.useState<string | null>(null);
   const [validationError, setValidationError] = React.useState<string | null>(null);
   const [isNavigating, setIsNavigating] = React.useState<boolean>(false);
+  const [isProcessingFile, setIsProcessingFile] = React.useState<boolean>(false);
 
   const scannerRef = React.useRef<Html5Qrcode | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const elementId = "dineback-qr-reader";
 
   const handleScanSuccess = React.useCallback(
@@ -39,7 +39,9 @@ export function QRScanner() {
         setIsNavigating(true);
         if (scannerRef.current) {
           try {
-            await scannerRef.current.stop();
+            if (scannerRef.current.isScanning) {
+              await scannerRef.current.stop();
+            }
           } catch {
             // Ignore stop errors
           }
@@ -52,13 +54,28 @@ export function QRScanner() {
     [router]
   );
 
-  // Initialize Camera Scanner
+  // Initialize Live Camera Scanner
   React.useEffect(() => {
     let isMounted = true;
 
     if (mode === "camera" && !isNavigating) {
       setCameraError(null);
       setValidationError(null);
+
+      // Check if secure context
+      const isSecure =
+        typeof window !== "undefined" &&
+        (window.isSecureContext ||
+          window.location.hostname === "localhost" ||
+          window.location.hostname === "127.0.0.1");
+
+      if (!isSecure) {
+        setCameraError(
+          "Live camera stream requires HTTPS when accessing over mobile WiFi. Please use 'Snap / Upload Photo' or 'Enter Code' below."
+        );
+        setMode("photo");
+        return;
+      }
 
       const html5QrCode = new Html5Qrcode(elementId);
       scannerRef.current = html5QrCode;
@@ -69,6 +86,7 @@ export function QRScanner() {
         aspectRatio: 1.0,
       };
 
+      // Try environment facing camera first
       html5QrCode
         .start(
           { facingMode: "environment" },
@@ -76,21 +94,36 @@ export function QRScanner() {
           (decodedText) => {
             if (isMounted) handleScanSuccess(decodedText);
           },
-          () => {
-            // Frame scan miss; silent
-          }
+          () => {}
         )
-        .then(() => {
-          if (isMounted) setIsScanning(true);
-        })
-        .catch((err) => {
-          console.warn("Camera init failed:", err);
-          if (isMounted) {
-            setCameraError(
-              "Camera access unavailable. Please grant camera permission or enter the payment code manually."
-            );
-            setMode("manual");
-          }
+        .catch(() => {
+          // Fallback to any available camera ID
+          Html5Qrcode.getCameras()
+            .then((cameras) => {
+              if (cameras && cameras.length > 0 && isMounted) {
+                const backCamera =
+                  cameras.find((c) => c.label.toLowerCase().includes("back")) ||
+                  cameras[cameras.length - 1];
+                return html5QrCode.start(
+                  backCamera.id,
+                  config,
+                  (decodedText) => {
+                    if (isMounted) handleScanSuccess(decodedText);
+                  },
+                  () => {}
+                );
+              }
+              throw new Error("No cameras detected");
+            })
+            .catch((err) => {
+              console.warn("Camera init failed:", err);
+              if (isMounted) {
+                setCameraError(
+                  "Camera access was denied or is unavailable. Use 'Snap / Upload Photo' or 'Enter Code' below."
+                );
+                setMode("photo");
+              }
+            });
         });
 
       return () => {
@@ -107,6 +140,28 @@ export function QRScanner() {
       };
     }
   }, [mode, isNavigating, handleScanSuccess]);
+
+  // Handle Photo / File Scan
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setValidationError(null);
+    setIsProcessingFile(true);
+
+    try {
+      const html5QrCode = new Html5Qrcode("dineback-qr-file-helper");
+      const decodedText = await html5QrCode.scanFile(file, true);
+      html5QrCode.clear();
+      handleScanSuccess(decodedText);
+    } catch (err) {
+      console.warn("QR file scan error:", err);
+      setValidationError("Could not detect a valid DineBack QR in this image. Please try another photo or enter code.");
+    } finally {
+      setIsProcessingFile(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,31 +180,46 @@ export function QRScanner() {
 
   return (
     <div className="w-full max-w-md mx-auto space-y-4">
+      {/* Hidden helper for file scanning */}
+      <div id="dineback-qr-file-helper" className="hidden" />
+
       {/* Mode Selector Tabs */}
       <div className="flex rounded-xl bg-slate-900/90 p-1 border border-slate-800">
         <button
           type="button"
           onClick={() => setMode("camera")}
-          className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-lg transition-all ${
             mode === "camera"
               ? "bg-emerald-500 text-slate-950 shadow-md font-bold"
               : "text-slate-400 hover:text-white"
           }`}
         >
-          <Camera className="w-4 h-4" />
-          Camera Scanner
+          <Camera className="w-3.5 h-3.5" />
+          Live Camera
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("photo")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-lg transition-all ${
+            mode === "photo"
+              ? "bg-emerald-500 text-slate-950 shadow-md font-bold"
+              : "text-slate-400 hover:text-white"
+          }`}
+        >
+          <ImageIcon className="w-3.5 h-3.5" />
+          Snap / Photo
         </button>
         <button
           type="button"
           onClick={() => setMode("manual")}
-          className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-lg transition-all ${
             mode === "manual"
               ? "bg-emerald-500 text-slate-950 shadow-md font-bold"
               : "text-slate-400 hover:text-white"
           }`}
         >
-          <Keyboard className="w-4 h-4" />
-          Enter Code / Link
+          <Keyboard className="w-3.5 h-3.5" />
+          Enter Code
         </button>
       </div>
 
@@ -157,15 +227,16 @@ export function QRScanner() {
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3.5 flex items-start gap-2.5 text-xs text-red-300 animate-in fade-in">
           <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
           <div>
-            <p className="font-semibold">Invalid Code</p>
+            <p className="font-semibold">Scan Error</p>
             <p className="text-red-200/80">{validationError}</p>
           </div>
         </div>
       )}
 
-      {cameraError && mode === "manual" && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
-          {cameraError}
+      {cameraError && mode !== "camera" && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200 flex items-start gap-2">
+          <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <p>{cameraError}</p>
         </div>
       )}
 
@@ -176,9 +247,9 @@ export function QRScanner() {
         </div>
       )}
 
-      {/* Camera Mode */}
+      {/* Live Camera Mode */}
       {mode === "camera" && !isNavigating && (
-        <Card className="border-slate-800 bg-slate-900/90 shadow-2xl overflow-hidden">
+        <Card className="border-slate-800 bg-slate-900/90 shadow-2xl overflow-hidden rounded-3xl">
           <div className="p-4 text-center border-b border-slate-800/80">
             <h3 className="text-sm font-bold text-white flex items-center justify-center gap-1.5">
               <QrCode className="w-4 h-4 text-emerald-400" />
@@ -189,7 +260,7 @@ export function QRScanner() {
             </p>
           </div>
 
-          <div className="relative bg-black flex items-center justify-center min-h-[300px]">
+          <div className="relative bg-black flex items-center justify-center min-h-[280px]">
             <div id={elementId} className="w-full overflow-hidden" />
           </div>
 
@@ -199,9 +270,57 @@ export function QRScanner() {
         </Card>
       )}
 
+      {/* Snap / Photo Upload Mode */}
+      {mode === "photo" && !isNavigating && (
+        <Card className="border-slate-800 bg-slate-900/90 shadow-2xl rounded-3xl">
+          <CardContent className="p-6 text-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto">
+              <Upload className="w-7 h-7" />
+            </div>
+
+            <div>
+              <h3 className="text-base font-bold text-white">
+                Snap or Upload QR Photo
+              </h3>
+              <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed">
+                Take a quick photo of the QR code or pick a screenshot from your phone gallery.
+              </p>
+            </div>
+
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/*"
+              capture="environment"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+
+            <Button
+              type="button"
+              disabled={isProcessingFile}
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full py-3.5 font-bold gap-2 text-sm shadow-lg shadow-emerald-500/20"
+            >
+              {isProcessingFile ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Analyzing Photo...
+                </>
+              ) : (
+                <>
+                  <Camera className="w-4 h-4" />
+                  Take Photo / Pick Image
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Manual Input Mode */}
       {mode === "manual" && (
-        <Card className="border-slate-800 bg-slate-900/90 shadow-2xl">
+        <Card className="border-slate-800 bg-slate-900/90 shadow-2xl rounded-3xl">
           <CardContent className="p-6">
             <form onSubmit={handleManualSubmit} className="space-y-4">
               <div>
