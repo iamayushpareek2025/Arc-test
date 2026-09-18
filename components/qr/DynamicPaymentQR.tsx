@@ -77,9 +77,9 @@ export function DynamicPaymentQR({
       <div className="relative p-4 rounded-2xl bg-white shadow-lg my-2 flex items-center justify-center">
         <QRCodeSVG
           value={paymentRequest.paymentUrl}
-          size={210}
-          level="H"
-          includeMargin={false}
+          size={230}
+          level="M"
+          includeMargin={true}
         />
 
         {paymentRequest.status === "CANCELLED" && (
