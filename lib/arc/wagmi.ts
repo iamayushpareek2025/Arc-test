@@ -3,14 +3,12 @@ import { arcTestnet } from "./chain";
 
 export const wagmiConfig = createConfig({
   chains: [arcTestnet],
-  ssr: true,
+  ssr: false,
   storage: createStorage({
     storage: typeof window !== "undefined" ? window.localStorage : undefined,
   }),
   connectors: [
-    injected({
-      shimDisconnect: true,
-    }),
+    injected(),
   ],
   transports: {
     [arcTestnet.id]: http("https://rpc.testnet.arc.io", {

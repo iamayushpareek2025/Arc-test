@@ -46,16 +46,10 @@ export function WalletButton() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  if (!mounted) {
-    return (
-      <Button variant="secondary" size="sm" className="opacity-70 cursor-wait">
-        <Wallet className="w-4 h-4 mr-1.5" />
-        Connect Wallet
-      </Button>
-    );
-  }
+  const activeConnected = mounted && isConnected && address;
+  const isWrongNetwork = mounted && chainId !== ARC_TESTNET_CHAIN_ID;
 
-  if (!isConnected || !address) {
+  if (!activeConnected) {
     return (
       <>
         <Button
@@ -73,8 +67,6 @@ export function WalletButton() {
       </>
     );
   }
-
-  const isWrongNetwork = chainId !== ARC_TESTNET_CHAIN_ID;
 
   if (isWrongNetwork) {
     return (

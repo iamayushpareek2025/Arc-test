@@ -41,14 +41,8 @@ export function WalletTestCard() {
     setMounted(true);
   }, []);
 
-  if (!mounted) {
-    return (
-      <Card className="w-full max-w-2xl border-slate-800 bg-slate-900/60 animate-pulse p-6">
-        <div className="h-6 w-48 bg-slate-800 rounded mb-4" />
-        <div className="h-20 bg-slate-800/50 rounded-xl" />
-      </Card>
-    );
-  }
+  const activeConnected = mounted && isConnected;
+  const activeNetwork = mounted ? isCorrectNetwork : false;
 
   return (
     <>
@@ -67,8 +61,8 @@ export function WalletTestCard() {
               </div>
             </div>
 
-            {isConnected ? (
-              isCorrectNetwork ? (
+            {activeConnected ? (
+              activeNetwork ? (
                 <Badge variant="success" className="gap-1.5 py-1">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   Arc Testnet Connected
@@ -86,7 +80,7 @@ export function WalletTestCard() {
         </CardHeader>
 
         <CardContent className="space-y-4">
-          {!isConnected ? (
+          {!activeConnected ? (
             <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-950/40 p-6 text-center">
               <Wallet className="w-10 h-10 text-slate-600 mx-auto mb-3" />
               <h4 className="text-base font-semibold text-slate-200">
@@ -102,7 +96,7 @@ export function WalletTestCard() {
                 </Button>
               </div>
             </div>
-          ) : !isCorrectNetwork ? (
+          ) : !activeNetwork ? (
             <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 space-y-3">
               <div className="flex items-start gap-3">
                 <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
