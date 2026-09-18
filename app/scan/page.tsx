@@ -11,22 +11,22 @@ export const metadata = {
 
 export default function ScanPage() {
   return (
-    <div className="min-h-[85vh] flex flex-col justify-center items-center py-6 sm:py-12 px-4">
-      <div className="w-full max-w-md space-y-6">
+    <div className="min-h-[85vh] flex flex-col justify-center items-center py-4 sm:py-10 px-3.5 sm:px-4">
+      <div className="w-full max-w-md space-y-5">
         {/* Navigation & Header */}
         <div className="flex items-center justify-between">
           <Link href="/">
             <Button
               variant="ghost"
               size="sm"
-              className="gap-1 text-xs text-slate-400 hover:text-white -ml-2"
+              className="gap-1.5 text-xs text-slate-400 hover:text-white -ml-2 rounded-xl"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              Back
+              Home
             </Button>
           </Link>
 
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-semibold text-emerald-400">
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-semibold text-emerald-400">
             <Sparkles className="w-3 h-3 text-emerald-400" />
             <span>Instant Cashback</span>
           </div>
@@ -39,7 +39,7 @@ export default function ScanPage() {
             Scan Bill to Pay
           </h1>
           <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
-            Position the restaurant QR code inside the frame. We request camera access exclusively to detect your bill invoice securely.
+            Position the restaurant QR inside the frame or take a quick photo to load your bill.
           </p>
         </div>
 
@@ -47,13 +47,13 @@ export default function ScanPage() {
         <QRScanner />
 
         {/* Security / Arc Verification Notice */}
-        <div className="rounded-2xl border border-slate-800/80 bg-slate-950/60 p-4 text-center space-y-2">
+        <div className="rounded-2xl border border-slate-800/80 bg-slate-950/60 p-4 text-center space-y-1.5">
           <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-300">
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
             <span>Cryptographically Verified Invoices</span>
           </div>
           <p className="text-[11px] text-slate-500 leading-relaxed max-w-xs mx-auto">
-            DineBack validates invoice signatures and IDs directly on Arc Testnet. External links and untrusted domains are automatically blocked.
+            DineBack validates invoice signatures and IDs directly on Arc Testnet.
           </p>
         </div>
       </div>

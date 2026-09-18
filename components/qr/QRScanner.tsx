@@ -15,25 +15,57 @@ import {
   RefreshCw,
   QrCode,
   Image as ImageIcon,
-  Upload,
-  ShieldAlert,
+  Smartphone,
+  Receipt,
   Sparkles,
+  Zap,
 } from "lucide-react";
+
+interface RecentInvoice {
+  id: string;
+  invoiceId: string;
+  restaurantName: string;
+  billAmount: number;
+  expectedCashback: number;
+  status: string;
+}
 
 export function QRScanner() {
   const router = useRouter();
 
-  const [mode, setMode] = React.useState<"camera" | "photo" | "manual">("photo");
+  const [mode, setMode] = React.useState<"photo" | "camera" | "manual">("photo");
   const [manualCode, setManualCode] = React.useState<string>("");
-  const [cameraError, setCameraError] = React.useState<string | null>(null);
   const [validationError, setValidationError] = React.useState<string | null>(null);
   const [isNavigating, setIsNavigating] = React.useState<boolean>(false);
   const [isProcessingFile, setIsProcessingFile] = React.useState<boolean>(false);
+  const [recentInvoices, setRecentInvoices] = React.useState<RecentInvoice[]>([]);
+  const [isLoadingInvoices, setIsLoadingInvoices] = React.useState<boolean>(false);
 
   const scannerRef = React.useRef<Html5Qrcode | null>(null);
   const cameraInputRef = React.useRef<HTMLInputElement | null>(null);
   const galleryInputRef = React.useRef<HTMLInputElement | null>(null);
   const elementId = "dineback-qr-reader";
+
+  // Fetch recent active invoices for 1-tap mobile demo testing
+  React.useEffect(() => {
+    async function loadInvoices() {
+      setIsLoadingInvoices(true);
+      try {
+        const res = await fetch("/api/invoices");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.invoices)) {
+            setRecentInvoices(data.invoices.slice(0, 3));
+          }
+        }
+      } catch {
+        // Ignore background fetch error
+      } finally {
+        setIsLoadingInvoices(false);
+      }
+    }
+    loadInvoices();
+  }, []);
 
   const handleScanSuccess = React.useCallback(
     async (decodedText: string) => {
@@ -57,34 +89,19 @@ export function QRScanner() {
     [router]
   );
 
-  // Initialize Live Camera Scanner (Works on localhost or HTTPS)
+  // Initialize Live Camera Scanner (Only when selected and on secure context)
   React.useEffect(() => {
     let isMounted = true;
 
     if (mode === "camera" && !isNavigating) {
-      setCameraError(null);
       setValidationError(null);
-
-      const isSecure =
-        typeof window !== "undefined" &&
-        (window.isSecureContext ||
-          window.location.hostname === "localhost" ||
-          window.location.hostname === "127.0.0.1");
-
-      if (!isSecure) {
-        setCameraError(
-          "Mobile browsers block live video streams over non-HTTPS local IP. Use 'Snap / Photo' below to scan with your phone camera instantly."
-        );
-        setMode("photo");
-        return;
-      }
 
       const html5QrCode = new Html5Qrcode(elementId);
       scannerRef.current = html5QrCode;
 
       const config = {
         fps: 10,
-        qrbox: { width: 250, height: 250 },
+        qrbox: { width: 240, height: 240 },
         aspectRatio: 1.0,
       };
 
@@ -116,10 +133,10 @@ export function QRScanner() {
               throw new Error("No cameras detected");
             })
             .catch((err) => {
-              console.warn("Camera init failed:", err);
+              console.warn("Camera stream unavailable:", err);
               if (isMounted) {
-                setCameraError(
-                  "Camera access was denied or is unavailable. Please use 'Snap / Photo' or 'Enter Code' below."
+                setValidationError(
+                  "Live video stream unavailable on unencrypted IP. Use 'Snap / Photo' or select an active invoice below."
                 );
                 setMode("photo");
               }
@@ -141,7 +158,7 @@ export function QRScanner() {
     }
   }, [mode, isNavigating, handleScanSuccess]);
 
-  // Robust Photo / File Scan using multi-scale jsQR & canvas
+  // Photo / File Scan using multi-scale jsQR & canvas
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -171,7 +188,7 @@ export function QRScanner() {
     } catch (err) {
       console.warn("QR file scan error:", err);
       setValidationError(
-        "Could not detect a valid QR code in this image. Please ensure the QR is well-lit and in focus, or enter the invoice code directly."
+        "Could not detect a clear QR code. Please make sure the QR is centered and well-lit, or select the invoice below."
       );
     } finally {
       setIsProcessingFile(false);
@@ -201,11 +218,11 @@ export function QRScanner() {
       <div id="dineback-qr-fallback-box" style={{ width: 1, height: 1, overflow: "hidden", opacity: 0 }} />
 
       {/* Mode Selector Tabs */}
-      <div className="flex rounded-xl bg-slate-900/90 p-1 border border-slate-800">
+      <div className="flex rounded-2xl bg-slate-900/90 p-1.5 border border-slate-800 backdrop-blur-md">
         <button
           type="button"
           onClick={() => setMode("photo")}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold rounded-xl transition-all ${
             mode === "photo"
               ? "bg-emerald-500 text-slate-950 shadow-md font-bold"
               : "text-slate-400 hover:text-white"
@@ -217,19 +234,19 @@ export function QRScanner() {
         <button
           type="button"
           onClick={() => setMode("camera")}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold rounded-xl transition-all ${
             mode === "camera"
               ? "bg-emerald-500 text-slate-950 shadow-md font-bold"
               : "text-slate-400 hover:text-white"
           }`}
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          Live Camera
+          Live Stream
         </button>
         <button
           type="button"
           onClick={() => setMode("manual")}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold rounded-xl transition-all ${
             mode === "manual"
               ? "bg-emerald-500 text-slate-950 shadow-md font-bold"
               : "text-slate-400 hover:text-white"
@@ -240,8 +257,9 @@ export function QRScanner() {
         </button>
       </div>
 
+      {/* Validation / Scan Errors */}
       {validationError && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3.5 flex items-start gap-2.5 text-xs text-red-300 animate-in fade-in">
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-3.5 flex items-start gap-2.5 text-xs text-red-300 animate-in fade-in">
           <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="font-semibold">Scan Notice</p>
@@ -256,23 +274,17 @@ export function QRScanner() {
         </div>
       )}
 
-      {cameraError && mode !== "camera" && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200 flex items-start gap-2">
-          <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <p className="text-[11px] leading-relaxed">{cameraError}</p>
-        </div>
-      )}
-
+      {/* Loading Transition Indicator */}
       {isNavigating && (
-        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center text-xs text-emerald-300 flex items-center justify-center gap-2">
+        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center text-xs text-emerald-300 flex items-center justify-center gap-2">
           <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
-          <span>Valid invoice detected. Loading bill...</span>
+          <span>Valid invoice detected. Opening bill checkout...</span>
         </div>
       )}
 
-      {/* Snap / Photo Upload Mode */}
+      {/* Mode 1: Snap / Photo Upload Mode */}
       {mode === "photo" && !isNavigating && (
-        <Card className="border-slate-800 bg-slate-900/90 shadow-2xl rounded-3xl">
+        <Card className="border-slate-800 bg-slate-900/90 shadow-2xl rounded-3xl backdrop-blur-md">
           <CardContent className="p-6 text-center space-y-5">
             <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto shadow-inner">
               <QrCode className="w-8 h-8" />
@@ -283,7 +295,7 @@ export function QRScanner() {
                 Scan Restaurant QR Code
               </h3>
               <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
-                Take a quick photo of the bill QR code or pick a screenshot from your gallery.
+                Take a photo of the bill QR code or pick an existing image from your gallery.
               </p>
             </div>
 
@@ -309,7 +321,7 @@ export function QRScanner() {
                 type="button"
                 disabled={isProcessingFile}
                 onClick={() => cameraInputRef.current?.click()}
-                className="w-full py-4 font-bold gap-2 text-sm shadow-lg shadow-emerald-500/20"
+                className="w-full py-4 font-bold gap-2 text-sm shadow-lg shadow-emerald-500/20 rounded-2xl"
               >
                 {isProcessingFile ? (
                   <>
@@ -329,7 +341,7 @@ export function QRScanner() {
                 variant="outline"
                 disabled={isProcessingFile}
                 onClick={() => galleryInputRef.current?.click()}
-                className="w-full py-3.5 text-xs font-semibold gap-2 border-slate-700 hover:bg-slate-800"
+                className="w-full py-3.5 text-xs font-semibold gap-2 border-slate-700 hover:bg-slate-800 rounded-2xl"
               >
                 <ImageIcon className="w-3.5 h-3.5 text-slate-400" />
                 Upload Photo from Gallery
@@ -339,7 +351,7 @@ export function QRScanner() {
         </Card>
       )}
 
-      {/* Live Camera Mode */}
+      {/* Mode 2: Live Camera Stream */}
       {mode === "camera" && !isNavigating && (
         <Card className="border-slate-800 bg-slate-900/90 shadow-2xl overflow-hidden rounded-3xl">
           <div className="p-4 text-center border-b border-slate-800/80">
@@ -352,24 +364,24 @@ export function QRScanner() {
             </p>
           </div>
 
-          <div className="relative bg-black flex items-center justify-center min-h-[280px]">
+          <div className="relative bg-black flex items-center justify-center min-h-[260px]">
             <div id={elementId} className="w-full overflow-hidden" />
           </div>
 
           <div className="p-3 bg-slate-950/80 text-center text-[11px] text-slate-500 border-t border-slate-800/60">
-            Powered by Arc Testnet • USDC Cashback Enabled
+            Requires HTTPS or localhost • Powered by Arc Testnet
           </div>
         </Card>
       )}
 
-      {/* Manual Input Mode */}
+      {/* Mode 3: Manual Input Mode */}
       {mode === "manual" && (
         <Card className="border-slate-800 bg-slate-900/90 shadow-2xl rounded-3xl">
           <CardContent className="p-6">
             <form onSubmit={handleManualSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
-                  Payment Request Code or Link
+                  Invoice Code or Link
                 </label>
                 <input
                   type="text"
@@ -377,20 +389,20 @@ export function QRScanner() {
                   onChange={(e) => setManualCode(e.target.value)}
                   placeholder="e.g. db_8f72k9a1b2c3 or paste URL"
                   required
-                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-3 text-sm text-white placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                  className="w-full rounded-2xl border border-slate-800 bg-slate-950 px-3.5 py-3 text-sm text-white placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
                 />
               </div>
 
-              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400 space-y-1">
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400 space-y-1">
                 <span className="font-semibold text-slate-300 block">Accepted Formats:</span>
-                <p>• Direct ID: <code className="text-emerald-400">db_8f72k9a1b2c3</code></p>
-                <p>• Full URL: <code className="text-emerald-400">https://.../pay/db_8f72k9a1b2c3</code></p>
+                <p>• Invoice ID: <code className="text-emerald-400 font-mono">db_8f72k9a1b2c3</code></p>
+                <p>• Direct URL: <code className="text-emerald-400 font-mono">/pay/db_8f72k9a1b2c3</code></p>
               </div>
 
               <Button
                 type="submit"
                 disabled={isNavigating || !manualCode.trim()}
-                className="w-full py-3 font-bold gap-2 shadow-lg shadow-emerald-500/20"
+                className="w-full py-3.5 font-bold gap-2 shadow-lg shadow-emerald-500/20 rounded-2xl"
               >
                 {isNavigating ? (
                   <>
@@ -407,6 +419,66 @@ export function QRScanner() {
             </form>
           </CardContent>
         </Card>
+      )}
+
+      {/* Native Mobile Scanning Tip */}
+      <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 flex items-start gap-3">
+        <Smartphone className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+        <div className="space-y-1">
+          <h4 className="text-xs font-bold text-emerald-300">
+            Native Phone Camera Tip
+          </h4>
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            You can also open your phone’s regular <strong className="text-slate-200">Camera App</strong> or <strong className="text-slate-200">MetaMask In-App Browser</strong> and point it at the restaurant screen QR to jump straight to checkout!
+          </p>
+        </div>
+      </div>
+
+      {/* Quick 1-Tap Active Invoices for testing */}
+      {recentInvoices.length > 0 && (
+        <div className="space-y-2 pt-2">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Zap className="w-3 h-3 text-emerald-400" />
+              Active Bills on POS
+            </span>
+            <span className="text-[10px] text-slate-500">1-Tap Quick Pay</span>
+          </div>
+
+          <div className="space-y-2">
+            {recentInvoices.map((inv) => (
+              <button
+                key={inv.id}
+                type="button"
+                onClick={() => {
+                  setIsNavigating(true);
+                  router.push(`/pay/${inv.id}`);
+                }}
+                className="w-full text-left p-3.5 rounded-2xl border border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 hover:border-emerald-500/40 transition-all flex items-center justify-between group"
+              >
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <Receipt className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-xs font-bold text-white group-hover:text-emerald-300">
+                      {inv.invoiceId} • {inv.restaurantName}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Bill: <strong className="text-slate-200">{inv.billAmount.toFixed(2)} USDC</strong>
+                    {inv.expectedCashback > 0 && (
+                      <span className="text-emerald-400 ml-1.5 font-semibold">
+                        (+{inv.expectedCashback.toFixed(2)} Cashback)
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-slate-950 transition-colors">
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
